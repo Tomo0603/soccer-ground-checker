@@ -1,1 +1,29 @@
 name: Ground Availability Check
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # JST 08:00〜25:00（=翌01:00）毎時 → UTC 23:00〜16:00
+    - cron: "0 23-23,0-16 * * *"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm install
+
+      - name: Run check
+        env:
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          RECIPIENTS: ${{ secrets.RECIPIENTS }}
+        run: npm run check
