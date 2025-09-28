@@ -37,46 +37,55 @@ async function sendMail({ subject, text }) {
   });
 }
 
-async function clickByText(page, text, tag = "a") {
-  const xp = `//${tag}[contains(normalize-space(.), "${text}")]`;
-  const [el] = await page.$x(xp);
-  if (!el) throw new Error(`テキスト "${text}" の要素が見つかりません`);
-  await el.click();
+// ==== $x 代替: テキストで要素を探してクリック ====
+async function clickByText(page, text, tags = ["a","button","label","div","span"]) {
+  const sel = tags.join(",");
+  const clicked = await page.evaluate((text, sel) => {
+    const nodes = Array.from(document.querySelectorAll(sel));
+    const target = nodes.find(n => (n.textContent || "").trim().includes(text));
+    if (target) {
+      target.scrollIntoView({behavior:"instant", block:"center"});
+      target.click();
+      return true;
+    }
+    return false;
+  }, text, sel);
+  if (!clicked) throw new Error(`テキスト "${text}" の要素が見つかりません`);
 }
 
+// ==== 対象施設チェック ====
 async function checkTarget(page, target) {
   const { name, url, resultSelector, keywords, kind, facilityPath = [] } = target;
   const start = Date.now();
-  const navTimeout = 45000, waitTimeout = 25000;
+  const navTimeout = 60000, waitTimeout = 30000;
 
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: navTimeout });
 
   if (kind === "ekanagawa") {
     for (const step of facilityPath) {
-      try {
-        await page.waitForSelector("body", { timeout: 5000 });
-        await clickByText(page, step, "a");
-        await page.waitForNetworkIdle?.({ idleTime: 500, timeout: 10000 }).catch(()=>{});
-      } catch (e) {
-        try { await clickByText(page, step, "button"); }
-        catch { try { await clickByText(page, step, "label"); }
-        catch { throw e; } }
-      }
+      await page.waitForSelector("body", { timeout: 10000 });
+      const beforeURL = page.url();
+      await clickByText(page, step);
+
+      // 遷移 or DOM更新を待つ
+      await Promise.race([
+        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {}),
+        page.waitForFunction(
+          (u) => location.href !== u || document.readyState === "complete",
+          { timeout: 15000 },
+          beforeURL
+        ).catch(() => {})
+      ]);
+
+      await sleep(800); // 安定化のため少し待つ
     }
-    await page.waitForSelector(resultSelector, { timeout: waitTimeout });
-    const content = await page.$eval(resultSelector, el => el.innerText || "");
-    const hit = (keywords || ["空き", "○", "◯"]).some(k => content.includes(k));
-    const ms = Date.now() - start;
-    return { name, url, hit, sample: content.slice(0, 500), ms };
   }
 
-  if (kind === "chigasaki") {
-    await page.waitForSelector(resultSelector, { timeout: waitTimeout });
-    const content = await page.$eval(resultSelector, el => el.innerText || "");
-    const hit = (keywords || ["空き", "○", "◯"]).some(k => content.includes(k));
-    const ms = Date.now() - start;
-    return { name, url, hit, sample: content.slice(0, 500), ms };
-  }
+  // ページが読み込まれ、ある程度テキストが出ていることを確認
+  await page.waitForFunction(
+    () => document.body && document.body.innerText.length > 200,
+    { timeout: 20000 }
+  ).catch(()=>{});
 
   await page.waitForSelector(resultSelector, { timeout: waitTimeout });
   const content = await page.$eval(resultSelector, el => el.innerText || "");
@@ -85,6 +94,7 @@ async function checkTarget(page, target) {
   return { name, url, hit, sample: content.slice(0, 500), ms };
 }
 
+// ==== メイン ====
 async function main() {
   const targetsRaw = await fs.readFile(targetsPath, "utf-8");
   const targets = JSON.parse(targetsRaw);
@@ -94,6 +104,17 @@ async function main() {
     args: ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process"]
   });
   const page = await browser.newPage();
+
+  // UA / 言語ヘッダ / タイムアウト設定
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  );
+  await page.setExtraHTTPHeaders({
+    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"
+  });
+  await page.setViewport({ width: 1366, height: 900 });
+  page.setDefaultNavigationTimeout(90000);
+  page.setDefaultTimeout(60000);
 
   const results = [];
   try {
@@ -112,7 +133,7 @@ async function main() {
 
   const hits = results.filter(r => r.hit);
 
-  // JST基準の曜日を取得（0=日,1=月,...）
+  // JST基準の曜日（0=日）
   const now = new Date();
   const dayJST = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" })).getDay();
   const nowJST = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
