@@ -1,0 +1,11 @@
+{
+  "name": "soccer-ground-checker",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "check": "node src/check.mjs" },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "nodemailer": "^6.9.14",
+    "puppeteer": "^23.6.0"
+  }
+}
