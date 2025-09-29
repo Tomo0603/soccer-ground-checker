@@ -39,3 +39,13 @@
     "keywords": ["空き", "○", "◯", "空有"]
   }
 ]
+,
+{
+  "name": "保土ケ谷公園 ラグビー場",
+  "kind": "ekanagawa",
+  "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
+  "facilityPath": ["スポーツ施設", "保土ケ谷公園", "ラグビー場"],
+  "resultSelector": "body",
+  "keywords": ["空き", "○", "◯", "空有"]
+}
+
