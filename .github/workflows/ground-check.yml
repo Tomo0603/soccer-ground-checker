@@ -18,8 +18,23 @@ jobs:
         with:
           node-version: "20"
 
+      # 状態確認（必ず出力される安全なデバッグ）
+      - name: Debug | Show files
+        run: |
+          pwd
+          ls -la
+          echo "--- .github/workflows ---"; ls -la .github/workflows || true
+          echo "--- src ---"; ls -la src || true
+          echo "--- data ---"; ls -la data || true
+          echo "--- package.json ---"; cat package.json || true
+
       - name: Install deps
         run: npm install
+
+      - name: Debug | node & npm
+        run: |
+          node -v
+          npm -v
 
       - name: Run check
         env:
