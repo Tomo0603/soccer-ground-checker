@@ -3,7 +3,11 @@
     "name": "保土ケ谷公園 サッカー場",
     "kind": "ekanagawa",
     "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
-    "facilityPath": ["スポーツ施設", "保土ケ谷公園", "サッカー場"],
+    "facilityPath": [
+      ["施設から探す", "スポーツ施設", "スポーツから探す"],
+      ["保土ケ谷公園", "保土ヶ谷公園"],
+      ["サッカー場", "サッカー"]
+    ],
     "resultSelector": "body",
     "keywords": ["空き", "○", "◯", "空有"]
   },
@@ -11,7 +15,11 @@
     "name": "境川遊水地公園 多目的グラウンド",
     "kind": "ekanagawa",
     "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
-    "facilityPath": ["スポーツ施設", "境川遊水地公園", "多目的グラウンド"],
+    "facilityPath": [
+      ["施設から探す", "スポーツ施設", "スポーツから探す"],
+      ["境川遊水地公園", "境川 遊水地 公園"],
+      ["多目的グラウンド", "多目的", "多目的グランド"]
+    ],
     "resultSelector": "body",
     "keywords": ["空き", "○", "◯", "空有"]
   },
@@ -19,7 +27,11 @@
     "name": "県立スポーツセンター 球技場（天然芝）",
     "kind": "ekanagawa",
     "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
-    "facilityPath": ["スポーツ施設", "県立スポーツセンター", "球技場（天然芝）"],
+    "facilityPath": [
+      ["施設から探す", "スポーツ施設", "スポーツから探す"],
+      ["県立スポーツセンター", "スポーツセンター"],
+      ["球技場", "球技場（天然芝）", "天然芝"]
+    ],
     "resultSelector": "body",
     "keywords": ["空き", "○", "◯", "空有"]
   },
@@ -27,7 +39,11 @@
     "name": "県立スポーツセンター 球技場（人工芝）",
     "kind": "ekanagawa",
     "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
-    "facilityPath": ["スポーツ施設", "県立スポーツセンター", "球技場（人工芝）"],
+    "facilityPath": [
+      ["施設から探す", "スポーツ施設", "スポーツから探す"],
+      ["県立スポーツセンター", "スポーツセンター"],
+      ["球技場", "球技場（人工芝）", "人工芝"]
+    ],
     "resultSelector": "body",
     "keywords": ["空き", "○", "◯", "空有"]
   },
@@ -35,6 +51,7 @@
     "name": "茅ヶ崎・柳島スポーツ公園（市システム）",
     "kind": "chigasaki",
     "url": "https://yoyaku.city.chigasaki.kanagawa.jp/cultos/reserve/gin_init2",
+    "facilityPath": [],
     "resultSelector": "body",
     "keywords": ["空き", "○", "◯", "空有"]
   },
@@ -42,7 +59,11 @@
     "name": "保土ケ谷公園 ラグビー場",
     "kind": "ekanagawa",
     "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
-    "facilityPath": ["スポーツ施設", "保土ケ谷公園", "ラグビー場"],
+    "facilityPath": [
+      ["施設から探す", "スポーツ施設", "スポーツから探す"],
+      ["保土ケ谷公園", "保土ヶ谷公園"],
+      ["ラグビー場", "ラグビー"]
+    ],
     "resultSelector": "body",
     "keywords": ["空き", "○", "◯", "空有"]
   }
