@@ -19,6 +19,7 @@ const RECIPIENTS = (process.env.RECIPIENTS || EMAIL_USER || "")
 
 // ==== ユーティリティ ====
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+const todayJST = () => new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
 
 async function sendMail({ subject, text }) {
   if (!EMAIL_USER || !EMAIL_PASS || RECIPIENTS.length === 0) {
@@ -37,7 +38,7 @@ async function sendMail({ subject, text }) {
   });
 }
 
-// ==== フレーム横断でクリック候補を収集（デバッグ用） ====
+// ==== クリック候補を収集（デバッグ用） ====
 async function dumpClickableTexts(page) {
   const frames = page.frames();
   const all = new Set();
@@ -56,7 +57,7 @@ async function dumpClickableTexts(page) {
   return Array.from(all).slice(0, 200);
 }
 
-// ==== $x 代替：フレーム横断で「テキスト一致」クリック ====
+// ==== テキスト一致クリック（全フレーム探索） ====
 async function clickByText(page, text, tags = ["a","button","label","div","span"]) {
   const frames = page.frames();
   const sel = tags.join(",");
@@ -82,12 +83,12 @@ async function getContent(page, selector, waitTimeout = 45000) {
   return await page.$eval(selector, el => el.innerText || "");
 }
 
-// ==== 「当月＋翌月」の2か月分だけ収集 ====
+// ==== 当月＋翌月（2か月分）だけ内容取得 ====
 async function collectTwoMonthsContent(page, selector) {
   let text = "";
   text += await getContent(page, selector);
 
-  // 翌月に進めそうなら1回だけ進む（候補語を順に試す）
+  // 翌月に進めそうなら1回だけ
   const nextMonthLabels = ["翌月", "次月", "来月", ">", "＞", ">>", "翌月へ", "次へ"];
   for (const label of nextMonthLabels) {
     try {
@@ -99,103 +100,60 @@ async function collectTwoMonthsContent(page, selector) {
       ]);
       await sleep(600);
       text += "\n" + (await getContent(page, selector));
-      break; // 1回だけ
-    } catch {
-      // 次の候補へ
-    }
+      break;
+    } catch { /* 次の候補へ */ }
   }
   return text;
 }
 
-// ==== 対象施設チェック ====
-async function checkTarget(page, target) {
-  const { name, url, resultSelector, keywords, kind, facilityPath = [] } = target;
-  const start = Date.now();
-  const navTimeout = 120000;
+// ==== 「日曜日の空きのみ」を判定するフィルタ ====
+// 直近2か月の「日曜日」の日付文字列候補を複数フォーマットで生成し、
+// その近傍（±120文字）に空きキーワードがあるかをチェック。
+function buildSundayTokensJST(months = 2) {
+  const base = todayJST();
+  const tokens = [];
+  const d = new Date(base);
+  d.setHours(0,0,0,0);
 
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: navTimeout });
-
-  // 初期ラベルをログ（facilityPathの表記調整に使う）
-  const firstList = await dumpClickableTexts(page);
-  console.log(`[DEBUG] ${name} @ ${url}\n[DEBUG] Available labels (first 40): ${firstList.slice(0,40).join(" | ")}`);
-
-  if (kind === "ekanagawa") {
-    for (const step of facilityPath) {
-      const beforeURL = page.url();
-      await clickByText(page, step);
-      await Promise.race([
-        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 25000 }).catch(()=>{}),
-        page.waitForFunction((u) => location.href !== u || document.readyState === "complete", { timeout: 20000 }, beforeURL).catch(()=>{})
-      ]);
-      const labels = await dumpClickableTexts(page);
-      console.log(`[DEBUG] After click "${step}" labels (first 40): ${labels.slice(0,40).join(" | ")}`);
-      await sleep(800);
+  // 2か月先の末日まで走査
+  const end = new Date(d);
+  end.setMonth(end.getMonth() + months + 1, 0); // 翌々月末
+  while (d <= end) {
+    if (d.getDay() === 0) { // 日曜
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const mm = String(m).padStart(2, "0");
+      const dd = String(day).padStart(2, "0");
+      tokens.push(
+        `${y}/${mm}/${dd}`, `${y}/${m}/${day}`,
+        `${mm}/${dd}`, `${m}/${day}`,
+        `${m}/${day}(日)`, `${mm}/${dd}(日)`,
+        `${y}-${mm}-${dd}`, `${y}-${m}-${day}`
+      );
     }
+    d.setDate(d.getDate() + 1);
   }
-
-  // ★ 当月＋翌月の2か月分だけ読み取る
-  const content = await collectTwoMonthsContent(page, resultSelector);
-
-  const hit = (keywords || ["空き", "○", "◯"]).some(k => content.includes(k));
-  const ms = Date.now() - start;
-  return { name, url, hit, sample: content.slice(0, 500), ms };
+  return Array.from(new Set(tokens));
 }
 
-// ==== メイン ====
-async function main() {
-  const targetsRaw = await fs.readFile(targetsPath, "utf-8");
-  const targets = JSON.parse(targetsRaw);
+function sundayHitFromText(content, keywords) {
+  const toks = buildSundayTokensJST(2);
+  const kw = (keywords && keywords.length ? keywords : ["空き","○","◯","空有"]).map(k => escapeRegExp(k));
+  const kwRegex = new RegExp(kw.join("|"), "i");
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process"]
-  });
-  const page = await browser.newPage();
-
-  // UA / 言語ヘッダ / タイムアウト
-  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-  await page.setExtraHTTPHeaders({ "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7" });
-  await page.setViewport({ width: 1366, height: 900 });
-  page.setDefaultNavigationTimeout(120000);
-  page.setDefaultTimeout(60000);
-
-  const results = [];
-  try {
-    for (const t of targets) {
-      try {
-        const r = await checkTarget(page, t);
-        results.push(r);
-      } catch (e) {
-        results.push({ name: t.name, url: t.url, hit: false, error: e.message });
-      }
-      await sleep(2000 + Math.random() * 2000);
+  for (const t of toks) {
+    const idx = content.indexOf(t);
+    if (idx >= 0) {
+      const start = Math.max(0, idx - 120);
+      const end = Math.min(content.length, idx + t.length + 120);
+      const window = content.slice(start, end);
+      if (kwRegex.test(window)) return true;
     }
-  } finally {
-    await browser.close();
   }
-
-  const hits = results.filter(r => r.hit);
-
-  // JST基準の曜日（0=日）
-  const now = new Date();
-  const dayJST = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" })).getDay();
-  const nowJST = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
-
-  const reportLines = results.map(r => {
-    if (r.error) return `× ${r.name}（${r.url}）: ERROR ${r.error}`;
-    return `${r.hit ? "✅" : "—"} ${r.name}（${r.url}）\n   例: ${r.sample.replace(/\s+/g, " ").slice(0, 140)}…`;
-  });
-  const body = [`実行時刻（JST）: ${nowJST}`, "", ...reportLines].join("\n");
-
-  if (hits.length > 0 && dayJST === 0) {
-    await sendMail({ subject: `⚽ 空き検知（日曜）: ${hits.length}件`, text: body });
-  } else {
-    console.log(body);
-  }
+  return false;
 }
 
-main().catch(async (e) => {
-  console.error("FATAL:", e);
-  try { await sendMail({ subject: "⚠️ チェッカー異常終了", text: String(e) }); } catch {}
-  process.exit(1);
-});
+function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+// ====
