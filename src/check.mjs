@@ -37,58 +37,105 @@ async function sendMail({ subject, text }) {
   });
 }
 
-// ==== $x 代替: テキストで要素を探してクリック ====
+// ==== フレーム横断でクリック候補を収集（デバッグ用） ====
+async function dumpClickableTexts(page) {
+  const frames = page.frames();
+  const all = new Set();
+  for (const f of frames) {
+    try {
+      const arr = await f.evaluate(() => {
+        const tags = ["a","button","label","div","span"];
+        const nodes = Array.from(document.querySelectorAll(tags.join(",")));
+        return nodes
+          .map(n => (n.textContent || "").replace(/\s+/g," ").trim())
+          .filter(t => t && t.length <= 30);
+      });
+      arr.forEach(t => all.add(t));
+    } catch {}
+  }
+  return Array.from(all).slice(0, 200);
+}
+
+// ==== $x 代替：フレーム横断で「テキスト一致」クリック ====
 async function clickByText(page, text, tags = ["a","button","label","div","span"]) {
+  const frames = page.frames();
   const sel = tags.join(",");
-  const clicked = await page.evaluate((text, sel) => {
-    const nodes = Array.from(document.querySelectorAll(sel));
-    const target = nodes.find(n => (n.textContent || "").trim().includes(text));
-    if (target) {
-      target.scrollIntoView({behavior:"instant", block:"center"});
-      target.click();
-      return true;
+  for (const f of frames) {
+    const clicked = await f.evaluate((text, sel) => {
+      const nodes = Array.from(document.querySelectorAll(sel));
+      const target = nodes.find(n => (n.textContent || "").replace(/\s+/g," ").trim().includes(text));
+      if (target) { target.scrollIntoView({behavior:"instant", block:"center"}); target.click(); return true; }
+      return false;
+    }, text, sel).catch(() => false);
+    if (clicked) return;
+  }
+  throw new Error(`テキスト "${text}" の要素が見つかりません`);
+}
+
+// ==== コンテンツ読み取り（待機込み） ====
+async function getContent(page, selector, waitTimeout = 45000) {
+  await page.waitForFunction(
+    () => document.body && document.body.innerText && document.body.innerText.length > 200,
+    { timeout: 25000 }
+  ).catch(()=>{});
+  await page.waitForSelector(selector, { timeout: waitTimeout });
+  return await page.$eval(selector, el => el.innerText || "");
+}
+
+// ==== 「当月＋翌月」の2か月分だけ収集 ====
+async function collectTwoMonthsContent(page, selector) {
+  let text = "";
+  text += await getContent(page, selector);
+
+  // 翌月に進めそうなら1回だけ進む（候補語を順に試す）
+  const nextMonthLabels = ["翌月", "次月", "来月", ">", "＞", ">>", "翌月へ", "次へ"];
+  for (const label of nextMonthLabels) {
+    try {
+      const beforeURL = page.url();
+      await clickByText(page, label);
+      await Promise.race([
+        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 25000 }).catch(()=>{}),
+        page.waitForFunction((u) => location.href !== u || document.readyState === "complete", { timeout: 20000 }, beforeURL).catch(()=>{})
+      ]);
+      await sleep(600);
+      text += "\n" + (await getContent(page, selector));
+      break; // 1回だけ
+    } catch {
+      // 次の候補へ
     }
-    return false;
-  }, text, sel);
-  if (!clicked) throw new Error(`テキスト "${text}" の要素が見つかりません`);
+  }
+  return text;
 }
 
 // ==== 対象施設チェック ====
 async function checkTarget(page, target) {
   const { name, url, resultSelector, keywords, kind, facilityPath = [] } = target;
   const start = Date.now();
-  const navTimeout = 60000, waitTimeout = 30000;
+  const navTimeout = 120000;
 
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: navTimeout });
 
+  // 初期ラベルをログ（facilityPathの表記調整に使う）
+  const firstList = await dumpClickableTexts(page);
+  console.log(`[DEBUG] ${name} @ ${url}\n[DEBUG] Available labels (first 40): ${firstList.slice(0,40).join(" | ")}`);
+
   if (kind === "ekanagawa") {
     for (const step of facilityPath) {
-      await page.waitForSelector("body", { timeout: 10000 });
       const beforeURL = page.url();
       await clickByText(page, step);
-
-      // 遷移 or DOM更新を待つ
       await Promise.race([
-        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {}),
-        page.waitForFunction(
-          (u) => location.href !== u || document.readyState === "complete",
-          { timeout: 15000 },
-          beforeURL
-        ).catch(() => {})
+        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 25000 }).catch(()=>{}),
+        page.waitForFunction((u) => location.href !== u || document.readyState === "complete", { timeout: 20000 }, beforeURL).catch(()=>{})
       ]);
-
-      await sleep(800); // 安定化のため少し待つ
+      const labels = await dumpClickableTexts(page);
+      console.log(`[DEBUG] After click "${step}" labels (first 40): ${labels.slice(0,40).join(" | ")}`);
+      await sleep(800);
     }
   }
 
-  // ページが読み込まれ、ある程度テキストが出ていることを確認
-  await page.waitForFunction(
-    () => document.body && document.body.innerText.length > 200,
-    { timeout: 20000 }
-  ).catch(()=>{});
+  // ★ 当月＋翌月の2か月分だけ読み取る
+  const content = await collectTwoMonthsContent(page, resultSelector);
 
-  await page.waitForSelector(resultSelector, { timeout: waitTimeout });
-  const content = await page.$eval(resultSelector, el => el.innerText || "");
   const hit = (keywords || ["空き", "○", "◯"]).some(k => content.includes(k));
   const ms = Date.now() - start;
   return { name, url, hit, sample: content.slice(0, 500), ms };
@@ -105,15 +152,11 @@ async function main() {
   });
   const page = await browser.newPage();
 
-  // UA / 言語ヘッダ / タイムアウト設定
-  await page.setUserAgent(
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-  );
-  await page.setExtraHTTPHeaders({
-    "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7"
-  });
+  // UA / 言語ヘッダ / タイムアウト
+  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+  await page.setExtraHTTPHeaders({ "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7" });
   await page.setViewport({ width: 1366, height: 900 });
-  page.setDefaultNavigationTimeout(90000);
+  page.setDefaultNavigationTimeout(120000);
   page.setDefaultTimeout(60000);
 
   const results = [];
