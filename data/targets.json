@@ -1,17 +1,5 @@
 [
   {
-    "name": "保土ケ谷公園 サッカー場",
-    "kind": "ekanagawa",
-    "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
-    "facilityPath": [
-      ["施設から探す", "スポーツ施設", "スポーツから探す"],
-      ["保土ケ谷公園", "保土ヶ谷公園"],
-      ["サッカー場", "サッカー"]
-    ],
-    "resultSelector": "body",
-    "keywords": ["空き", "○", "◯", "空有"]
-  },
-  {
     "name": "境川遊水地公園 多目的グラウンド",
     "kind": "ekanagawa",
     "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
