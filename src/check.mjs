@@ -31,7 +31,26 @@ async function sendMail({ subject, text }) {
   await transporter.sendMail({ from: EMAIL_USER, to: RECIPIENTS.join(","), subject, text });
 }
 
-// ========== クリックユーティリティ ==========
+// ---------- ラベル可視化 ----------
+async function dumpClickableTexts(page) {
+  const frames = page.frames();
+  const all = new Set();
+  for (const f of frames) {
+    try {
+      const arr = await f.evaluate(() => {
+        const tags = ["a","button","label","div","span"];
+        const nodes = Array.from(document.querySelectorAll(tags.join(",")));
+        return nodes
+          .map(n => (n.textContent || "").replace(/\s+/g," ").trim())
+          .filter(t => t && t.length <= 30);
+      });
+      arr.forEach(t => all.add(t));
+    } catch {}
+  }
+  return Array.from(all);
+}
+
+// ---------- クリックユーティリティ ----------
 function norm(s) {
   return (s || "")
     .replace(/[Ａ-Ｚａ-ｚ０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
@@ -67,7 +86,7 @@ async function clickByAnyText(page, texts, tags = ["a","button","label","div","s
   throw new Error(`テキスト候補 ${JSON.stringify(wants)} が見つかりません`);
 }
 
-// ========== 日曜トークン生成 ==========
+// ---------- 日曜トークン ----------
 function buildSundayTokensJST(months = 2) {
   const base = todayJST();
   const tokens = [];
@@ -96,7 +115,8 @@ function buildSundayTokensJST(months = 2) {
 
 function sundayHitFromText(content, keywords) {
   const toks = buildSundayTokensJST(2);
-  const kw = (keywords && keywords.length ? keywords : ["空き","○","◯","空有"]).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const kw = (keywords && keywords.length ? keywords : ["空き","○","◯","空有"])
+    .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const kwRegex = new RegExp(kw.join("|"), "i");
   for (const t of toks) {
     const idx = content.indexOf(t);
@@ -108,7 +128,7 @@ function sundayHitFromText(content, keywords) {
   return false;
 }
 
-// ========== ページ処理 ==========
+// ---------- ページ処理 ----------
 async function getContent(page, selector, waitTimeout = 45000) {
   await page.waitForFunction(() => document.body && document.body.innerText.length > 200, { timeout: 25000 }).catch(()=>{});
   await page.waitForSelector(selector, { timeout: waitTimeout });
@@ -138,7 +158,13 @@ async function collectTwoMonthsContent(page, selector) {
 async function checkTarget(page, target) {
   const { name, url, resultSelector, keywords, kind, facilityPath = [] } = target;
   const start = Date.now();
+
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
+
+  // 画面にあるラベルを最初にログ
+  const firstList = await dumpClickableTexts(page);
+  console.log(`[DEBUG] ${name} @ ${url}\n[DEBUG] labels(first 50): ${firstList.slice(0,50).join(" | ")}`);
+
   if (kind === "ekanagawa") {
     for (const step of facilityPath) {
       const beforeURL = page.url();
@@ -148,15 +174,19 @@ async function checkTarget(page, target) {
         page.waitForFunction((u) => location.href !== u, { timeout: 20000 }, beforeURL).catch(()=>{})
       ]);
       await sleep(600);
+      // クリック後のラベルもログ
+      const labels = await dumpClickableTexts(page);
+      console.log(`[DEBUG] after "${Array.isArray(step)?step.join("/") : step}" -> labels(first 50): ${labels.slice(0,50).join(" | ")}`);
     }
   }
+
   const content = await collectTwoMonthsContent(page, resultSelector);
   const hit = sundayHitFromText(content, keywords);
   const ms = Date.now() - start;
   return { name, url, hit, sample: content.slice(0, 500), ms };
 }
 
-// ========== メイン ==========
+// ---------- メイン ----------
 async function main() {
   const targets = JSON.parse(await fs.readFile(targetsPath, "utf-8"));
   const browser = await puppeteer.launch({
@@ -164,12 +194,15 @@ async function main() {
     args: ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process"]
   });
   const page = await browser.newPage();
+
+  // 軽量化
   await page.setRequestInterception(true);
   page.on("request", (req) => {
     const type = req.resourceType();
     if (["image","font","stylesheet","media"].includes(type)) return req.abort();
     req.continue();
   });
+
   await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
   await page.setExtraHTTPHeaders({ "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7" });
   await page.setViewport({ width: 1366, height: 900 });
