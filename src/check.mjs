@@ -31,7 +31,7 @@ async function sendMail({ subject, text }) {
   await transporter.sendMail({ from: EMAIL_USER, to: RECIPIENTS.join(","), subject, text });
 }
 
-// ---------- ラベル可視化 ----------
+// ---------- ラベル一覧ダンプ ----------
 async function dumpClickableTexts(page) {
   const frames = page.frames();
   const all = new Set();
@@ -40,9 +40,7 @@ async function dumpClickableTexts(page) {
       const arr = await f.evaluate(() => {
         const tags = ["a","button","label","div","span"];
         const nodes = Array.from(document.querySelectorAll(tags.join(",")));
-        return nodes
-          .map(n => (n.textContent || "").replace(/\s+/g," ").trim())
-          .filter(t => t && t.length <= 30);
+        return nodes.map(n => (n.textContent || "").replace(/\s+/g," ").trim()).filter(t => t);
       });
       arr.forEach(t => all.add(t));
     } catch {}
@@ -86,7 +84,7 @@ async function clickByAnyText(page, texts, tags = ["a","button","label","div","s
   throw new Error(`テキスト候補 ${JSON.stringify(wants)} が見つかりません`);
 }
 
-// ---------- 日曜トークン ----------
+// ---------- 日曜だけを判定 ----------
 function buildSundayTokensJST(months = 2) {
   const base = todayJST();
   const tokens = [];
@@ -99,14 +97,9 @@ function buildSundayTokensJST(months = 2) {
       const y = d.getFullYear();
       const m = d.getMonth() + 1;
       const day = d.getDate();
-      const mm = String(m).padStart(2, "0");
-      const dd = String(day).padStart(2, "0");
-      tokens.push(
-        `${y}/${mm}/${dd}`, `${y}/${m}/${day}`,
-        `${mm}/${dd}`, `${m}/${day}`,
-        `${m}/${day}(日)`, `${mm}/${dd}(日)`,
-        `${y}-${mm}-${dd}`, `${y}-${m}-${day}`
-      );
+      const mm = String(m).padStart(2,"0");
+      const dd = String(day).padStart(2,"0");
+      tokens.push(`${y}/${mm}/${dd}`, `${m}/${day}`, `${m}/${day}(日)`, `${y}-${mm}-${dd}`);
     }
     d.setDate(d.getDate() + 1);
   }
@@ -121,7 +114,7 @@ function sundayHitFromText(content, keywords) {
   for (const t of toks) {
     const idx = content.indexOf(t);
     if (idx >= 0) {
-      const window = content.slice(Math.max(0, idx - 120), Math.min(content.length, idx + t.length + 120));
+      const window = content.slice(Math.max(0, idx-120), Math.min(content.length, idx+120));
       if (kwRegex.test(window)) return true;
     }
   }
@@ -129,26 +122,25 @@ function sundayHitFromText(content, keywords) {
 }
 
 // ---------- ページ処理 ----------
-async function getContent(page, selector, waitTimeout = 45000) {
-  await page.waitForFunction(() => document.body && document.body.innerText.length > 200, { timeout: 25000 }).catch(()=>{});
-  await page.waitForSelector(selector, { timeout: waitTimeout });
+async function getContent(page, selector, waitTimeout=45000) {
+  await page.waitForSelector(selector,{timeout:waitTimeout});
   return await page.$eval(selector, el => el.innerText || "");
 }
 
 async function collectTwoMonthsContent(page, selector) {
   let text = "";
   text += await getContent(page, selector);
-  const nextMonthLabels = ["翌月", "次月", "来月", ">", "＞", ">>", "翌月へ", "次へ"];
-  for (const label of nextMonthLabels) {
+  const nextLabels = ["翌月","次月","来月",">","＞","翌月へ","次へ"];
+  for (const label of nextLabels) {
     try {
       const beforeURL = page.url();
-      await clickByAnyText(page, label);
+      await clickByAnyText(page,label);
       await Promise.race([
-        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(()=>{}),
-        page.waitForFunction((u) => location.href !== u, { timeout: 20000 }, beforeURL).catch(()=>{})
+        page.waitForNavigation({waitUntil:"domcontentloaded",timeout:20000}).catch(()=>{}),
+        page.waitForFunction((u)=>location.href!==u,{timeout:20000},beforeURL).catch(()=>{})
       ]);
       await sleep(600);
-      text += "\n" + (await getContent(page, selector));
+      text += "\n"+(await getContent(page,selector));
       break;
     } catch {}
   }
@@ -156,81 +148,71 @@ async function collectTwoMonthsContent(page, selector) {
 }
 
 async function checkTarget(page, target) {
-  const { name, url, resultSelector, keywords, kind, facilityPath = [] } = target;
+  const {name,url,resultSelector,keywords,kind,facilityPath=[]} = target;
   const start = Date.now();
 
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90000 });
-
-  // 画面にあるラベルを最初にログ
+  await page.goto(url,{waitUntil:"domcontentloaded",timeout:90000});
   const firstList = await dumpClickableTexts(page);
-  console.log(`[DEBUG] ${name} @ ${url}\n[DEBUG] labels(first 50): ${firstList.slice(0,50).join(" | ")}`);
+  console.log(`[DEBUG] ${name} @ ${url}\n[DEBUG] labels(first30): ${firstList.slice(0,30).join(" | ")}`);
 
-  if (kind === "ekanagawa") {
+  if (kind==="ekanagawa") {
     for (const step of facilityPath) {
       const beforeURL = page.url();
-      await clickByAnyText(page, step);
+      await clickByAnyText(page,step);
       await Promise.race([
-        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(()=>{}),
-        page.waitForFunction((u) => location.href !== u, { timeout: 20000 }, beforeURL).catch(()=>{})
+        page.waitForNavigation({waitUntil:"domcontentloaded",timeout:20000}).catch(()=>{}),
+        page.waitForFunction((u)=>location.href!==u,{timeout:20000},beforeURL).catch(()=>{})
       ]);
       await sleep(600);
-      // クリック後のラベルもログ
       const labels = await dumpClickableTexts(page);
-      console.log(`[DEBUG] after "${Array.isArray(step)?step.join("/") : step}" -> labels(first 50): ${labels.slice(0,50).join(" | ")}`);
+      console.log(`[DEBUG] after "${Array.isArray(step)?step.join("/") : step}" -> ${labels.slice(0,30).join(" | ")}`);
     }
   }
 
-  const content = await collectTwoMonthsContent(page, resultSelector);
-  const hit = sundayHitFromText(content, keywords);
-  const ms = Date.now() - start;
-  return { name, url, hit, sample: content.slice(0, 500), ms };
+  const content = await collectTwoMonthsContent(page,resultSelector);
+  const hit = sundayHitFromText(content,keywords);
+  const ms = Date.now()-start;
+  return {name,url,hit,sample:content.slice(0,200),ms};
 }
 
 // ---------- メイン ----------
-async function main() {
-  const targets = JSON.parse(await fs.readFile(targetsPath, "utf-8"));
+async function main(){
+  const targets = JSON.parse(await fs.readFile(targetsPath,"utf-8"));
   const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--single-process"]
+    headless:true,
+    args:["--no-sandbox","--disable-dev-shm-usage","--disable-gpu"]
   });
   const page = await browser.newPage();
-
-  // 軽量化
   await page.setRequestInterception(true);
-  page.on("request", (req) => {
-    const type = req.resourceType();
-    if (["image","font","stylesheet","media"].includes(type)) return req.abort();
+  page.on("request",req=>{
+    if(["image","font","stylesheet","media"].includes(req.resourceType())) return req.abort();
     req.continue();
   });
 
-  await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-  await page.setExtraHTTPHeaders({ "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7" });
-  await page.setViewport({ width: 1366, height: 900 });
-
-  const results = [];
-  for (const t of targets) {
-    try { results.push(await checkTarget(page, t)); }
-    catch (e) { results.push({ name: t.name, url: t.url, hit: false, error: e.message }); }
-    await sleep(1500);
+  const results=[];
+  for(const t of targets){
+    try{ results.push(await checkTarget(page,t)); }
+    catch(e){ results.push({name:t.name,url:t.url,hit:false,error:e.message}); }
+    await sleep(1200);
   }
   await browser.close();
 
-  const hits = results.filter(r => r.hit);
-  const nowJST = todayJST().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
-  const body = [
+  const hits=results.filter(r=>r.hit);
+  const nowJST=todayJST().toLocaleString("ja-JP",{timeZone:"Asia/Tokyo"});
+  const body=[
     `実行時刻（JST）: ${nowJST}`,
     `対象: 日曜日のみ、当月＋翌月`,
     `ヒット数: ${hits.length}`,
     "",
-    ...results.map(r => r.error ? `× ${r.name}: ERROR ${r.error}` : `${r.hit ? "✅" : "—"} ${r.name} [${r.ms}ms]\n   例: ${r.sample.replace(/\s+/g," ").slice(0, 120)}…`)
+    ...results.map(r=>r.error?`× ${r.name}: ERROR ${r.error}`:`${r.hit?"✅":"—"} ${r.name} [${r.ms}ms]\n   例: ${r.sample.replace(/\s+/g," ").slice(0,100)}…`)
   ].join("\n");
 
-  await sendMail({ subject: `⚽ 日曜空きチェック: ヒット${hits.length}件`, text: body });
+  await sendMail({subject:`⚽ 日曜空きチェック: ヒット${hits.length}件`,text:body});
   console.log(body);
 }
 
-main().catch(async e => {
-  console.error("FATAL:", e);
-  try { await sendMail({ subject: "⚠️ チェッカー異常終了", text: String(e) }); } catch {}
+main().catch(async e=>{
+  console.error("FATAL:",e);
+  try{ await sendMail({subject:"⚠️ チェッカー異常終了",text:String(e)});}catch{}
   process.exit(1);
 });
