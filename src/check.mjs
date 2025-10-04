@@ -1,312 +1,253 @@
-// src/check.mjs  ── Puppeteer + メール通知（自治体遷移を強化 / XPath不使用 / コピペ置換用）
-import 'dotenv/config.js';
-import puppeteer from 'puppeteer';
-import fs from 'fs';
-import path from 'path';
-import dayjs from 'dayjs';
-import nodemailer from 'nodemailer';
+import puppeteer from "puppeteer";
+import nodemailer from "nodemailer";
+import dotenv from "dotenv";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
-/* ========= ユーティリティ ========= */
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const humanWait = async (min = 200, max = 800) =>
-  sleep(Math.floor(Math.random() * (max - min + 1)) + min);
+dotenv.config();
 
-const ROOT = path.resolve(process.cwd());
-const TARGETS_PATH = path.join(ROOT, 'data', 'targets.json');
-const CACHE_PATH = path.join(ROOT, 'data', 'notified.json');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const targetsPath = path.join(__dirname, "..", "data", "targets.json");
 
-/* 時刻フォーマット（ログ用） */
-function nowJST() {
-  return dayjs().format('YYYY/MM/DD HH:mm:ss');
-}
+const EMAIL_USER = process.env.EMAIL_USER;
+const EMAIL_PASS = process.env.EMAIL_PASS;
+const RECIPIENTS = (process.env.RECIPIENTS || EMAIL_USER || "")
+  .split(",").map(s => s.trim()).filter(Boolean);
 
-/* 文字を含む <a> をクリック（相対/絶対どちらも対応） */
-async function clickLinkByText(page, text) {
-  const href = await page.evaluate((t) => {
-    const links = Array.from(document.querySelectorAll('a'));
-    const target = links.find((a) => (a.textContent || '').replace(/\s+/g, ' ').includes(t));
-    if (!target) return null;
-    return target.getAttribute('href') || target.href || null;
-  }, text);
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+const nowJST = () => new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
 
-  if (!href) return false;
-
-  if (/^https?:\/\//i.test(href)) {
-    await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-  } else {
-    await page.evaluate((t) => {
-      const links = Array.from(document.querySelectorAll('a'));
-      const target = links.find((a) => (a.textContent || '').replace(/\s+/g, ' ').includes(t));
-      if (target) target.click();
-    }, text);
-    await page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 }).catch(() => {});
+async function sendMail({ subject, text }) {
+  if (!EMAIL_USER || !EMAIL_PASS || RECIPIENTS.length === 0) {
+    console.warn("メール設定が未完了（EMAIL_USER/EMAIL_PASS/RECIPIENTS）。通知はスキップします。");
+    return;
   }
-  return true;
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+  });
+  await transporter.sendMail({ from: EMAIL_USER, to: RECIPIENTS.join(","), subject, text });
 }
 
-/* 「検索/再検索/さがす」ボタンを押す */
-async function clickSearchButton(page) {
-  const clicked = await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button, input[type="submit"]'));
-    const re = /検索|再検索|さがす|検索する/;
-    const target = btns.find((el) => {
-      const t = (el.textContent || '').trim();
-      const v = (el.getAttribute('value') || '').trim();
-      return re.test(t) || re.test(v);
-    });
-    if (target) { target.click(); return true; }
+/* ================= ユーティリティ ================= */
+
+function normalize(s) {
+  return (s || "")
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function dumpClickableTexts(page) {
+  const frames = page.frames();
+  const all = new Set();
+  for (const f of frames) {
+    try {
+      const arr = await f.evaluate(() => {
+        const grab = (n) => {
+          const t = (n.innerText || n.textContent || "").replace(/\s+/g, " ").trim();
+          const title = (n.getAttribute("title") || "").trim();
+          const aria = (n.getAttribute("aria-label") || "").trim();
+          const alt = (n.getAttribute("alt") || "").trim();
+          return [t, title, aria, alt].filter(Boolean);
+        };
+        const tags = ["a","button","label","div","span","area","img","[role=button]","option"];
+        const nodes = Array.from(document.querySelectorAll(tags.join(",")));
+        const out = [];
+        for (const n of nodes) out.push(...grab(n));
+        return out.filter(Boolean).map(s => s.length > 60 ? s.slice(0,60) : s);
+      });
+      arr.forEach(t => all.add(normalize(t)));
+    } catch {}
+  }
+  return Array.from(all);
+}
+
+async function clickByAnyText(page, texts, tags = ["a","button","label","div","span","area","img","[role=button]","option"]) {
+  const wants = (Array.isArray(texts) ? texts : [texts]).map(normalize);
+  const beforeURL = page.url();
+  const beforeLabels = await dumpClickableTexts(page);
+
+  // try in all frames
+  const frames = page.frames();
+  let clicked = false;
+  for (const f of frames) {
+    const ok = await f.evaluate((wants, sel) => {
+      function N(s){return (s||"").replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/\s+/g," ").trim();}
+      const nodes = Array.from(document.querySelectorAll(sel));
+      for (const n of nodes) {
+        const cand = [
+          N(n.innerText||n.textContent||""),
+          N(n.getAttribute("title")||""),
+          N(n.getAttribute("aria-label")||""),
+          N(n.getAttribute("alt")||""),
+        ].filter(Boolean);
+        if (cand.some(t => wants.some(w => t.includes(w)))) {
+          n.scrollIntoView({behavior:"instant", block:"center"});
+          (n.click || n.dispatchEvent) && (n.click ? n.click() : n.dispatchEvent(new MouseEvent("click", {bubbles:true})));
+          return true;
+        }
+      }
+      return false;
+    }, wants, tags.join(",")).catch(() => false);
+    if (ok) { clicked = true; break; }
+  }
+  if (!clicked) throw new Error(`テキスト候補 ${JSON.stringify(wants)} が見つかりません`);
+
+  // URL変化 or DOMテキスト変化（AJAX） を待つ
+  const domChanged = (async () => {
+    for (let i=0;i<20;i++){ // ≒10秒
+      await sleep(500);
+      const now = await dumpClickableTexts(page);
+      if (now.length !== beforeLabels.length ||
+          now.slice(0,50).join("|") !== beforeLabels.slice(0,50).join("|")) return true;
+    }
     return false;
-  });
-  if (clicked) {
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  })();
+
+  await Promise.race([
+    page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(()=>{}),
+    page.waitForFunction((u)=>location.href!==u,{timeout:8000},beforeURL).catch(()=>{}),
+    domChanged
+  ]);
+}
+
+function buildSundayTokensJST(months = 2) {
+  const base = nowJST();
+  const tokens = [];
+  const d = new Date(base);
+  d.setHours(0,0,0,0);
+  const end = new Date(d);
+  end.setMonth(end.getMonth() + months + 1, 0);
+  while (d <= end) {
+    if (d.getDay() === 0) {
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const mm = String(m).padStart(2,"0");
+      const dd = String(day).padStart(2,"0");
+      tokens.push(`${y}/${mm}/${dd}`, `${m}/${day}`, `${m}/${day}(日)`, `${y}-${mm}-${dd}`);
+    }
+    d.setDate(d.getDate() + 1);
   }
-  return clicked;
+  return Array.from(new Set(tokens));
 }
 
-/* 行内に「申込」ボタンがあるか */
-async function rowHasApply(row) {
-  return await row.evaluate((el) => {
-    const cand = Array.from(el.querySelectorAll('a, button'));
-    return cand.some((n) => /申込/.test(n.textContent || ''));
-  });
+function sundayHitFromText(content, keywords) {
+  const toks = buildSundayTokensJST(2);
+  const kw = (keywords && keywords.length ? keywords : ["空き","○","◯","空有"])
+    .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const kwRegex = new RegExp(kw.join("|"), "i");
+  for (const t of toks) {
+    const idx = content.indexOf(t);
+    if (idx >= 0) {
+      const window = content.slice(Math.max(0, idx-150), Math.min(content.length, idx+150));
+      if (kwRegex.test(window)) return true;
+    }
+  }
+  return false;
 }
 
-/* 時間帯抽出（09:00～11:00 → 09:00-11:00） */
-function pickTimeRange(text) {
-  const s = text.replace(/[～〜~]/g, '-');
-  const m = s.match(/([01]\d|2[0-3]):\d{2}-([01]\d|2[0-3]):\d{2}/);
-  return m ? m[0] : '';
+async function getContent(page, selector, waitTimeout=45000) {
+  await page.waitForFunction(() => document.body && (document.body.innerText||"").length > 200, { timeout: 20000 }).catch(()=>{});
+  await page.waitForSelector(selector,{timeout:waitTimeout});
+  return await page.$eval(selector, el => el.innerText || "");
 }
 
-/* キャッシュ */
-function loadCache() {
-  if (!fs.existsSync(CACHE_PATH)) return new Set();
-  try { return new Set(JSON.parse(fs.readFileSync(CACHE_PATH, 'utf8'))); }
-  catch { return new Set(); }
-}
-function saveCache(set) {
-  fs.writeFileSync(CACHE_PATH, JSON.stringify([...set], null, 2));
-}
-function keyOf(city, facility, date, time, court = '') {
-  return [city, facility, date, time, court].join('|');
-}
-
-/* ターゲットの読み込み */
-function loadTargets() {
-  const raw = fs.readFileSync(TARGETS_PATH, 'utf8');
-  return JSON.parse(raw);
+async function collectTwoMonthsContent(page, selector) {
+  let text = "";
+  text += await getContent(page, selector);
+  const nextLabels = ["翌月","次月","来月",">","＞","翌月へ","次へ"];
+  for (const label of nextLabels) {
+    try {
+      await clickByAnyText(page,label);
+      await sleep(600);
+      text += "\n"+(await getContent(page,selector));
+      break;
+    } catch {}
+  }
+  return text;
 }
 
-/* メール送信（Gmail/SMTP） */
-const transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST,         // smtp.gmail.com
-  port: Number(process.env.MAIL_PORT), // 465
-  secure: true,
-  auth: { user: process.env.MAIL_USER, pass: process.env.MAIL_PASS },
-});
-async function sendMail(subject, text) {
-  const info = await transporter.sendMail({
-    from: `"施設予約Bot" <${process.env.MAIL_USER}>`,
-    to: process.env.MAIL_TO,
-    subject,
-    text,
-  });
-  console.log('📬 Mail sent:', info.messageId);
-}
+/* ================= 施設チェック本体 ================= */
 
-/* 画面のリンク一覧をログ（デバッグ用） */
-async function logLinkSnapshot(page, label) {
-  const labels = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('a'))
-      .map(a => (a.textContent || '').replace(/\s+/g, ' ').trim())
-      .filter(Boolean)
-  );
-  console.log(`[DEBUG] after "${label}" ->`, labels.slice(0, 200).join(' | '));
-}
+async function checkTarget(page, target) {
+  const {name,url,resultSelector,keywords,kind,facilityPath=[]} = target;
+  const start = Date.now();
 
-/* 自治体ページに入る（直URL → 失敗時は画面操作） */
-async function gotoMunicipality(page, muniName) {
-  // 1) まずポータルへ
-  await page.goto('https://yoyaku.e-kanagawa.lg.jp/portal/web/', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await humanWait();
+  await page.goto(url,{waitUntil:"domcontentloaded",timeout:90000});
+  const first = await dumpClickableTexts(page);
+  console.log(`[DEBUG] ${name} @ ${url}\n[DEBUG] labels(first30): ${first.slice(0,30).join(" | ")}`);
 
-  // 2) 直URLマップ（安定）
-  const muniMap = {
-    '神奈川県': 'https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx',
-    '海老名市': 'https://yoyaku.e-kanagawa.lg.jp/Ebina/Web/Wg_ModeSelect.aspx',
-    // 必要に応じて追加
-  };
-  if (muniMap[muniName]) {
-    await page.goto(muniMap[muniName], { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(()=>{});
-    await humanWait();
-    return true;
+  if (kind==="ekanagawa" || kind==="chigasaki") {
+    for (const step of facilityPath) {
+      await clickByAnyText(page,step);
+      await sleep(400);
+      const labels = await dumpClickableTexts(page);
+      console.log(`[DEBUG] after "${Array.isArray(step)?step.join("/") : step}" -> ${labels.slice(0,30).join(" | ")}`);
+    }
   }
 
-  // 3) 直URLがなければ、画面操作で遷移（表記ゆれに強い順）
-  await clickLinkByText(page, '施設予約システムメニュー'); await humanWait();
-  await clickLinkByText(page, 'ポータルサイトへ');         await humanWait();
-  await clickLinkByText(page, '自治体から選ぶ');           await humanWait();
-
-  const ok = await clickLinkByText(page, muniName);
-  await humanWait();
-  return ok;
+  const content = await collectTwoMonthsContent(page,resultSelector);
+  const hit = sundayHitFromText(content,keywords);
+  const ms = Date.now()-start;
+  return {name,url,hit,sample:content.slice(0,200),ms};
 }
 
-/* ========= メイン ========= */
-async function main() {
-  const cfg = loadTargets(); // data/targets.json
-  const cache = loadCache();
+/* ================= メイン ================= */
+
+async function main(){
+  // targets.json はトップレベル「配列」想定
+  let targets;
+  try {
+    const raw = await fs.readFile(targetsPath,"utf-8");
+    targets = JSON.parse(raw);
+    if (!Array.isArray(targets)) throw new Error("targets.json は配列である必要があります");
+  } catch (e) {
+    const msg = `targets.json の読み込みエラー: ${e.message}`;
+    console.error("FATAL:", msg);
+    await sendMail({subject:"⚠️ チェッカー設定エラー", text: msg});
+    process.exit(1);
+  }
 
   const browser = await puppeteer.launch({
-    headless: 'new',
-    args: [
-      '--lang=ja-JP',
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-    ],
+    headless:true,
+    args:["--no-sandbox","--disable-dev-shm-usage","--disable-gpu"]
   });
   const page = await browser.newPage();
-  await page.emulateTimezone('Asia/Tokyo');
-  await page.setExtraHTTPHeaders({ 'Accept-Language': 'ja-JP,ja;q=0.9' });
+  await page.setExtraHTTPHeaders({ "Accept-Language": "ja-JP,ja;q=0.9,en-US;q=0.8" });
+  await page.setRequestInterception(true);
+  page.on("request",req=>{
+    if(["image","font","stylesheet","media"].includes(req.resourceType())) return req.abort();
+    req.continue();
+  });
 
-  console.log(`実行時刻（JST）: ${dayjs().format('YYYY/MM/DD HH:mm:ss')}`);
-
-  for (const city of cfg.cities) {
-    console.log(`[INFO] 自治体へ遷移: ${city.name}`);
-    const okCity = await gotoMunicipality(page, city.name);
-    if (!okCity) {
-      console.warn(`× 自治体へ入れませんでした: ${city.name}`);
-      continue;
-    }
-
-    // デバッグ：リンクスナップショット
-    await logLinkSnapshot(page, `${city.name} ModeSelect`);
-
-    for (const t of city.facilities) {
-      console.log(`[INFO] 施設探索: ${city.name} / ${t.name}`);
-
-      // 施設検索（テキストボックスがあれば使う）
-      const inputs = await page.$$('input[type="text"]');
-      if (inputs.length > 0) {
-        try {
-          await inputs[0].click({ clickCount: 3 });
-          await inputs[0].type(t.name, { delay: 15 });
-          await clickSearchButton(page);
-          await humanWait();
-        } catch {}
-      }
-
-      // 施設リンクへ。見つからなければトークン分割で再トライ
-      let moved = await clickLinkByText(page, t.name);
-      if (!moved) {
-        const tokens = t.name.split(/\s+/).filter(Boolean);
-        for (const tok of tokens) {
-          moved = await clickLinkByText(page, tok);
-          if (moved) break;
-        }
-      }
-      if (!moved) {
-        console.warn(`× 施設見つからず: ${t.name}`);
-        continue;
-      }
-
-      // 日付を回して空きチェック
-      let d = dayjs(t.date_range.from);
-      const end = dayjs(t.date_range.to);
-
-      while (d.isBefore(end) || d.isSame(end, 'day')) {
-        const label = d.format('YYYY/MM/DD');
-
-        // カレンダー（aria-label）で選択
-        let selected = false;
-        const dayBtn = await page.$(`[aria-label="${label}"]`);
-        if (dayBtn) {
-          await dayBtn.click().catch(()=>{});
-          await page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 }).catch(()=>{});
-          selected = true;
-        } else {
-          // 「次/翌」ボタンでめくるフォールバック
-          const clickedNext = await page.evaluate(() => {
-            const cand = Array.from(document.querySelectorAll('button, a'));
-            const n = cand.find((el) => /次|翌|Next/i.test(el.textContent || ''));
-            if (n) { n.click(); return true; }
-            return false;
-          });
-          if (clickedNext) {
-            await page.waitForNetworkIdle({ idleTime: 500, timeout: 10000 }).catch(()=>{});
-            // 同じ日付で再試行
-            continue;
-          }
-        }
-
-        // テーブル走査
-        const rows = await page.$$('table tr');
-        let hitToday = 0;
-
-        for (const row of rows) {
-          const text = (await row.evaluate((el) => el.innerText)).replace(/\s+/g, ' ');
-          const timeNorm = pickTimeRange(text);
-          if (!timeNorm) continue;
-
-          if (Array.isArray(t.times) && t.times.length > 0 && !t.times.includes(timeNorm)) continue;
-
-          const hasApply = await rowHasApply(row);
-          const openText = /空き|○|◯|予約可/.test(text);
-          if (!(hasApply || openText)) continue;
-
-          const court = (text.match(/コート[Ａ-ＺA-Z0-9]+|面\s*[A-ZＡ-Ｚ]/) || [])[0] || '';
-          if (Array.isArray(t.courts) && t.courts.length > 0) {
-            const ok = t.courts.some((c) => court.includes(c));
-            if (!ok) continue;
-          }
-
-          const k = keyOf(city.name, t.name, d.format('YYYY-MM-DD'), timeNorm, court);
-          if (!cache.has(k)) {
-            cache.add(k);
-            saveCache(cache);
-
-            const body = [
-              '🟢 空き枠を検知しました',
-              `市: ${city.name}`,
-              `施設: ${t.name}${court ? `（${court}）` : ''}`,
-              `日付: ${d.format('YYYY-MM-DD (ddd)')}`,
-              `時間: ${timeNorm}`,
-              `URL: ${page.url()}`,
-              '',
-              '※予約は手動でお願いします。'
-            ].join('\n');
-
-            await sendMail(
-              `【空き検知】${city.name} / ${t.name} / ${d.format('MM/DD')} ${timeNorm}`,
-              body
-            );
-            console.log('🔔 Detect & Mail:', k);
-            hitToday++;
-          }
-        }
-
-        if (hitToday === 0) {
-          console.log(`— ヒットなし: ${t.name} @ ${d.format('YYYY-MM-DD')}`);
-        }
-
-        d = d.add(1, 'day');
-        await humanWait(300, 900);
-      }
-
-      // 施設ごとに軽く待機
-      await humanWait(500, 1200);
-      // 自治体トップへ戻す（画面差異で壊れにくくする）
-      await gotoMunicipality(page, city.name);
-    }
+  const results=[];
+  for(const t of targets){
+    try{ results.push(await checkTarget(page,t)); }
+    catch(e){ results.push({name:t.name,url:t.url,hit:false,error:e.message}); }
+    await sleep(900);
   }
-
   await browser.close();
-  console.log(`完了: ${nowJST()}`);
+
+  const hits=results.filter(r=>r.hit);
+  const body=[
+    `実行時刻（JST）: ${nowJST().toLocaleString("ja-JP",{timeZone:"Asia/Tokyo"})}`,
+    `対象: 日曜日のみ、当月＋翌月`,
+    `ヒット数: ${hits.length}`,
+    "",
+    ...results.map(r=>r.error?`× ${r.name}: ERROR ${r.error}`:`${r.hit?"✅":"—"} ${r.name} [${r.ms}ms]\n   例: ${r.sample.replace(/\s+/g," ").slice(0,100)}…`)
+  ].join("\n");
+
+  // ヒット0でも必ず通知
+  await sendMail({subject:`⚽ 日曜空きチェック: ヒット${hits.length}件`, text: body});
+  console.log(body);
 }
 
-/* ========= 実行 ========= */
-main().catch(async (e) => {
-  console.error('❌ watcher error:', e);
-  try { await sendMail('【監視エラー】soccer-ground-checker', `${e.stack || e}`); } catch {}
+main().catch(async e=>{
+  console.error("FATAL:",e);
+  try{ await sendMail({subject:"⚠️ チェッカー異常終了",text:String(e)});}catch{}
   process.exit(1);
 });
