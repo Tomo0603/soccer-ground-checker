@@ -140,7 +140,7 @@ async function clickByTextsWithDomChange(page, texts, timeout = 20000) {
 
 /** ===== メイン処理 ===== */
 async function main() {
-  const targets = await readJSON(path.resolve("targets.json"));
+  const targets = await readJSON(path.resolve("data/targets.json"));
 
   console.log(`実行時刻（JST）: ${nowJST()}`);
   console.log(`対象: 日曜日のみ、当月＋翌月`); // 既存ログ互換（実際の抽出条件は別途）
