@@ -1,19 +1,92 @@
-{
-  "site": "https://yoyaku.e-kanagawa.lg.jp/portal/web/",
-  "cities": [
-    {
-      "name": "海老名市",
-      "facilities": [
-        {
-          "name": "中野公園",
-          "date_range": { "from": "2025-09-13", "to": "2025-12-31" }
-          /* "times": ["09:00-11:00","11:00-13:00"]  ← 欲しい枠だけに絞るなら追加 */
-        },
-        {
-          "name": "海老名運動公園 陸上",
-          "date_range": { "from": "2025-09-13", "to": "2025-12-31" }
-        }
-      ]
-    }
-  ]
-}
+[
+  {
+    "name": "保土ケ谷公園 サッカー場",
+    "kind": "ekanagawa",
+    "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
+    "facilityPath": [
+      ["e-kanagawa施設予約システム ポータルサイトへ", "ポータルサイトへ", "ポータル"],
+      ["施設を管理している自治体から選ぶ", "自治体から選ぶ"],
+      ["神奈川県", "神奈川"],
+      ["施設名称から選ぶ", "50 音順", "50音順"],
+      ["ハ行", "ほ行", "ホ", "ほ", "は行", "ハ"],
+      ["保土ケ谷公園", "保土ヶ谷公園"],
+      ["サッカー場", "サッカー", "球技場"]
+    ],
+    "resultSelector": "body",
+    "keywords": ["空き", "○", "◯", "空有"]
+  },
+  {
+    "name": "境川遊水地公園 多目的グラウンド",
+    "kind": "ekanagawa",
+    "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
+    "facilityPath": [
+      ["e-kanagawa施設予約システム ポータルサイトへ", "ポータルサイトへ", "ポータル"],
+      ["施設を管理している自治体から選ぶ", "自治体から選ぶ"],
+      ["神奈川県", "神奈川"],
+      ["施設名称から選ぶ", "50 音順", "50音順"],
+      ["サ行", "さ行", "サ", "さ"],
+      ["境川遊水地公園", "境川遊水地"],
+      ["多目的グラウンド", "多目的", "多目的グランド", "グラウンド"]
+    ],
+    "resultSelector": "body",
+    "keywords": ["空き", "○", "◯", "空有"]
+  },
+  {
+    "name": "県立スポーツセンター 球技場（天然芝）",
+    "kind": "ekanagawa",
+    "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
+    "facilityPath": [
+      ["e-kanagawa施設予約システム ポータルサイトへ", "ポータルサイトへ", "ポータル"],
+      ["施設を管理している自治体から選ぶ", "自治体から選ぶ"],
+      ["神奈川県", "神奈川"],
+      ["施設名称から選ぶ", "50 音順", "50音順"],
+      ["カ行", "か行", "カ", "か", "ケ", "け"],
+      ["県立スポーツセンター", "スポーツセンター"],
+      ["球技場", "球技場（天然芝）", "天然芝", "サッカー", "ラグビー"]
+    ],
+    "resultSelector": "body",
+    "keywords": ["空き", "○", "◯", "空有"]
+  },
+  {
+    "name": "県立スポーツセンター 球技場（人工芝）",
+    "kind": "ekanagawa",
+    "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
+    "facilityPath": [
+      ["e-kanagawa施設予約システム ポータルサイトへ", "ポータルサイトへ", "ポータル"],
+      ["施設を管理している自治体から選ぶ", "自治体から選ぶ"],
+      ["神奈川県", "神奈川"],
+      ["施設名称から選ぶ", "50 音順", "50音順"],
+      ["カ行", "か行", "カ", "か", "ケ", "け"],
+      ["県立スポーツセンター", "スポーツセンター"],
+      ["球技場", "球技場（人工芝）", "人工芝", "サッカー"]
+    ],
+    "resultSelector": "body",
+    "keywords": ["空き", "○", "◯", "空有"]
+  },
+  {
+    "name": "茅ヶ崎・柳島スポーツ公園（市システム）",
+    "kind": "chigasaki",
+    "url": "https://yoyaku.city.chigasaki.kanagawa.jp/cultos/reserve/gin_init2",
+    "facilityPath": [
+      ["空き状況の確認", "空き状況", "空き状況照会", "施設予約", "予約", "利用状況"]
+    ],
+    "resultSelector": "body",
+    "keywords": ["空き", "○", "◯", "空有"]
+  },
+  {
+    "name": "保土ケ谷公園 ラグビー場",
+    "kind": "ekanagawa",
+    "url": "https://yoyaku.e-kanagawa.lg.jp/Kanagawa/Web/Wg_ModeSelect.aspx",
+    "facilityPath": [
+      ["e-kanagawa施設予約システム ポータルサイトへ", "ポータルサイトへ", "ポータル"],
+      ["施設を管理している自治体から選ぶ", "自治体から選ぶ"],
+      ["神奈川県", "神奈川"],
+      ["施設名称から選ぶ", "50 音順", "50音順"],
+      ["ハ行", "ほ行", "ホ", "ほ", "は行", "ハ"],
+      ["保土ケ谷公園", "保土ヶ谷公園"],
+      ["ラグビー場", "ラグビー", "球技場"]
+    ],
+    "resultSelector": "body",
+    "keywords": ["空き", "○", "◯", "空有"]
+  }
+]
