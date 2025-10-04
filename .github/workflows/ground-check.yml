@@ -1,44 +1,30 @@
-name: Ground Availability Check
+name: Ground Checker
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   schedule:
-    # JST 08:00〜25:00（=翌01:00）毎時 → UTC 23:00〜16:00
-    - cron: "0 23-23,0-16 * * *"
+    - cron: "0 15 * * *"  # JST 0:00 に相当（必要に応じて調整）
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # 状態確認（必ず出力される安全なデバッグ）
-      - name: Debug | Show files
-        run: |
-          pwd
-          ls -la
-          echo "--- .github/workflows ---"; ls -la .github/workflows || true
-          echo "--- src ---"; ls -la src || true
-          echo "--- data ---"; ls -la data || true
-          echo "--- package.json ---"; cat package.json || true
-
-      - name: Install deps
+      - name: Install dependencies
         run: npm install
 
-      - name: Debug | node & npm
-        run: |
-          node -v
-          npm -v
-
-      - name: Run check
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-          RECIPIENTS: ${{ secrets.RECIPIENTS }}
+      - name: Run checker
         run: npm run check
+        env:
+          MAIL_HOST: ${{ secrets.MAIL_HOST }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_PASS: ${{ secrets.MAIL_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
